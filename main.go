@@ -171,7 +171,7 @@ func Decrypt(in io.Reader, out io.Writer, keyAes, keyHmac []byte) (err error) {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: sast-export-dump.exe <path to zip> <encryption key> [optional: application name]")
+		fmt.Println("Usage: sast-export-dump.exe <path to zip> <encryption key> [optional: application name] [optional: project name prefix]")
 		return
 	}
 
@@ -179,16 +179,22 @@ func main() {
 	key := os.Args[2]
 
 	application := "MyApp"
-	if len(os.Args) == 4 {
+	if len(os.Args) >= 4 {
 		application = os.Args[3]
+	}
+	fmt.Println("Will generate mapping.json files mapping the projects to the application named: ", application)
+	prefix := ""
+	if len(os.Args) >= 5 {
+		prefix = os.Args[4]
+		fmt.Println("Will update the Cx1 project names with the prefix: ", prefix)
 	}
 
 	var idmapping map[string][]uint64 = make(map[string][]uint64)
 	var namemapping map[string][]string = make(map[string][]string)
-	var Projects []struct {
+	/*var Projects []struct {
 		ID   uint64 `json:"id"`
 		Name string `json:"name"`
-	}
+	}*/
 
 	keyBytes, _ := base64.StdEncoding.DecodeString(string(key))
 
@@ -200,8 +206,8 @@ func main() {
 	}(zipReader)
 
 	for _, f := range zipReader.File {
-
-		path := filepath.Dir("out/" + f.Name)
+		path_pre := "out/" + zipFile + "/"
+		path := filepath.Dir(path_pre + f.Name)
 		err := os.MkdirAll(path, 0777)
 		if err != nil {
 			fmt.Printf("Failed to create folder %v: %s", path, err)
@@ -218,20 +224,37 @@ func main() {
 			flateReader := flate.NewReader(compressedFile)
 			plaintext, _ := io.ReadAll(flateReader)
 
-			os.WriteFile("out/"+f.Name, plaintext, 0777)
 			if f.Name == "projects.json" {
-				json.Unmarshal(plaintext, &Projects)
+				var temp []map[string]interface{}
+				json.Unmarshal(plaintext, &temp)
+
+				for id, project := range temp {
+					idmapping[application] = append(idmapping[application], (uint64)(project["id"].(float64)))
+					namemapping[application] = append(namemapping[application], project["name"].(string))
+
+					if prefix != "" {
+						temp[id]["name"] = prefix + temp[id]["name"].(string)
+					}
+				}
+
+				if prefix != "" {
+					plaintext, _ = json.Marshal(temp)
+				}
 			}
+
+			os.WriteFile(path_pre+f.Name, plaintext, 0777)
+
 		}
 
 	}
 
-	for _, p := range Projects {
+	/*for _, p := range Projects {
 		idmapping[application] = append(idmapping[application], p.ID)
 		namemapping[application] = append(namemapping[application], p.Name)
-	}
+	}*/
 	rawJson, _ := json.Marshal(idmapping)
 	os.WriteFile("project_id_mapping.json", rawJson, 0777)
 	rawJson, _ = json.Marshal(namemapping)
 	os.WriteFile("project_name_mapping.json", rawJson, 0777)
+
 }

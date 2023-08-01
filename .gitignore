@@ -1,0 +1,5 @@
+*.exe
+e2e_test.*
+out
+*.json
+cxsast_exporter*

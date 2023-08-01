@@ -15,11 +15,14 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -169,6 +172,82 @@ func Decrypt(in io.Reader, out io.Writer, keyAes, keyHmac []byte) (err error) {
 	return nil
 }
 
+// this function comes from the original sast-to-ast-export tool
+// with some modifications
+func CreateExportPackage(symmetricKey []byte, prefix, zipFile string, fileList []string) error { //nolint:gocritic
+	exportFileName := prefix + zipFile
+	// create zip
+	exportFile, ioErr := os.Create(exportFileName)
+	if ioErr != nil {
+		return errors.Wrap(ioErr, "failed to create file for encrypted data")
+	}
+	defer func() {
+		if closeErr := exportFile.Close(); closeErr != nil {
+			log.Debug().Err(closeErr).Msg("closing export file")
+		}
+	}()
+
+	zipWriter := zip.NewWriter(exportFile)
+	defer zipWriter.Close()
+
+	// chain deflate and encryption and then deflate of the zip archive itself
+	// the first deflate is needed to reduce the encrypted file size
+	// otherwise if file is encrypted and then deflated, deflate won't be able to reduce the size
+	// because of the chaoric bytes of encrypted data
+	var err error
+	for _, fileName := range fileList {
+		err = func() error {
+			// files are added to the tmp
+			file, ferr := os.Open(path.Join("out", zipFile, fileName))
+			if ferr != nil {
+				return errors.Wrap(ferr, "failed to open file for zip")
+			}
+			defer file.Close()
+
+			zipFileWriter, zerr := zipWriter.Create(fileName)
+			if zerr != nil {
+				return errors.Wrapf(zerr, "failed to open zip writer for file %s", fileName)
+			}
+
+			// create pipe (bytes written to pw go to pr)
+			pr, pw := io.Pipe()
+			// errChan needs to be buffered to not block the pipe
+			errChan := make(chan error, 1)
+			go func() {
+				// operations with pipe writer need to be in a separate goroutine
+				// writer needs to be closed for reader to stop "waiting" for new bytes
+				defer pw.Close()
+				// apply first DEFLATE to original content (which will come to pipe writer from file)
+				// this will send DEFLATEd content down the pipe to the reader
+				flateWriter, ferr := flate.NewWriter(pw, flate.DefaultCompression)
+				if ferr != nil {
+					errChan <- err
+					return
+				}
+				defer flateWriter.Close()
+				if _, err = io.Copy(flateWriter, file); err != nil {
+					errChan <- err
+					return
+				}
+				errChan <- nil
+			}()
+			// EncryptSymmetric will get the DEFLATEd content from pipe reader, encrypt it and send
+			// to zipFileWriter, which will apply DEFLATE again and write bytes inside the zip archive
+			err = Encrypt(pr, zipFileWriter, symmetricKey, symmetricKey)
+			if err != nil {
+				return errors.Wrap(err, "failed to encrypt data")
+			}
+
+			return <-errChan
+		}()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: sast-export-dump.exe <path to zip> <encryption key> [optional: application name] [optional: project name prefix]")
@@ -189,6 +268,7 @@ func main() {
 		fmt.Println("Will update the Cx1 project names with the prefix: ", prefix)
 	}
 
+	var fileList []string
 	var idmapping map[string][]uint64 = make(map[string][]uint64)
 	var namemapping map[string][]string = make(map[string][]string)
 	/*var Projects []struct {
@@ -209,6 +289,7 @@ func main() {
 		path_pre := "out/" + zipFile + "/"
 		path := filepath.Dir(path_pre + f.Name)
 		err := os.MkdirAll(path, 0777)
+		fileList = append(fileList, f.Name)
 		if err != nil {
 			fmt.Printf("Failed to create folder %v: %s", path, err)
 		} else {
@@ -229,12 +310,12 @@ func main() {
 				json.Unmarshal(plaintext, &temp)
 
 				for id, project := range temp {
-					idmapping[application] = append(idmapping[application], (uint64)(project["id"].(float64)))
-					namemapping[application] = append(namemapping[application], project["name"].(string))
-
 					if prefix != "" {
 						temp[id]["name"] = prefix + temp[id]["name"].(string)
 					}
+
+					idmapping[application] = append(idmapping[application], (uint64)(project["id"].(float64)))
+					namemapping[application] = append(namemapping[application], project["name"].(string))
 				}
 
 				if prefix != "" {
@@ -257,4 +338,12 @@ func main() {
 	rawJson, _ = json.Marshal(namemapping)
 	os.WriteFile("project_name_mapping.json", rawJson, 0777)
 
+	if prefix != "" {
+		err := CreateExportPackage(keyBytes, prefix, zipFile, fileList)
+		if err != nil {
+			fmt.Printf("Error while re-encrypting: %s\n", err)
+		} else {
+			fmt.Println("Re-encrypted using the same key into new file: ", prefix+zipFile)
+		}
+	}
 }

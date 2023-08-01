@@ -20,8 +20,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 )
 
 const (
@@ -186,6 +184,11 @@ func main() {
 	}
 
 	var idmapping map[string][]uint64 = make(map[string][]uint64)
+	var namemapping map[string][]string = make(map[string][]string)
+	var Projects []struct {
+		ID   uint64 `json:"id"`
+		Name string `json:"name"`
+	}
 
 	keyBytes, _ := base64.StdEncoding.DecodeString(string(key))
 
@@ -196,14 +199,8 @@ func main() {
 		_ = zipReader.Close()
 	}(zipReader)
 
-	re := regexp.MustCompile("([0-9]+).json")
-
 	for _, f := range zipReader.File {
-		matches := re.FindStringSubmatch(f.Name)
-		if len(matches) > 1 {
-			u, _ := strconv.ParseUint(matches[1], 10, 2)
-			idmapping[application] = append(idmapping[application], u)
-		}
+
 		path := filepath.Dir("out/" + f.Name)
 		err := os.MkdirAll(path, 0777)
 		if err != nil {
@@ -222,9 +219,19 @@ func main() {
 			plaintext, _ := io.ReadAll(flateReader)
 
 			os.WriteFile("out/"+f.Name, plaintext, 0777)
+			if f.Name == "projects.json" {
+				json.Unmarshal(plaintext, &Projects)
+			}
 		}
+
 	}
 
+	for _, p := range Projects {
+		idmapping[application] = append(idmapping[application], p.ID)
+		namemapping[application] = append(namemapping[application], p.Name)
+	}
 	rawJson, _ := json.Marshal(idmapping)
 	os.WriteFile("project_id_mapping.json", rawJson, 0777)
+	rawJson, _ = json.Marshal(namemapping)
+	os.WriteFile("project_name_mapping.json", rawJson, 0777)
 }

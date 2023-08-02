@@ -272,7 +272,7 @@ func main() {
 	var idmapping map[string][]uint64 = make(map[string][]uint64)
 	var namemapping map[string][]string = make(map[string][]string)
 
-	var uniqueProjectNames map[string]uint64
+	var uniqueProjectNames map[string]uint64 = make(map[string]uint64)
 	nameConflicts := false
 
 	keyBytes, _ := base64.StdEncoding.DecodeString(string(key))

@@ -271,10 +271,9 @@ func main() {
 	var fileList []string
 	var idmapping map[string][]uint64 = make(map[string][]uint64)
 	var namemapping map[string][]string = make(map[string][]string)
-	/*var Projects []struct {
-		ID   uint64 `json:"id"`
-		Name string `json:"name"`
-	}*/
+
+	var uniqueProjectNames map[string]uint64
+	nameConflicts := false
 
 	keyBytes, _ := base64.StdEncoding.DecodeString(string(key))
 
@@ -306,20 +305,38 @@ func main() {
 			plaintext, _ := io.ReadAll(flateReader)
 
 			if f.Name == "projects.json" {
-				var temp []map[string]interface{}
-				json.Unmarshal(plaintext, &temp)
+				var allProjects []map[string]interface{}
+				json.Unmarshal(plaintext, &allProjects)
 
-				for id, project := range temp {
+				for id := range allProjects {
 					if prefix != "" {
-						temp[id]["name"] = prefix + temp[id]["name"].(string)
+						allProjects[id]["name"] = prefix + allProjects[id]["name"].(string)
 					}
 
-					idmapping[application] = append(idmapping[application], (uint64)(project["id"].(float64)))
-					namemapping[application] = append(namemapping[application], project["name"].(string))
+					_, exists := uniqueProjectNames[allProjects[id]["name"].(string)]
+					if exists {
+						newName := fmt.Sprintf("%v-%d", allProjects[id]["name"].(string), (uint64)(allProjects[id]["id"].(float64)))
+						fmt.Printf(" - duplicate project name %v with id %d, will rename this one to: %v\n",
+							allProjects[id]["name"].(string),
+							(uint64)(allProjects[id]["id"].(float64)),
+							newName,
+						)
+						allProjects[id]["name"] = newName
+
+						uniqueProjectNames[newName] = (uint64)(allProjects[id]["id"].(float64))
+
+						nameConflicts = true
+					} else {
+						// no conflict
+						uniqueProjectNames[allProjects[id]["name"].(string)] = (uint64)(allProjects[id]["id"].(float64))
+					}
+
+					idmapping[application] = append(idmapping[application], (uint64)(allProjects[id]["id"].(float64)))
+					namemapping[application] = append(namemapping[application], allProjects[id]["name"].(string))
 				}
 
 				if prefix != "" {
-					plaintext, _ = json.Marshal(temp)
+					plaintext, _ = json.Marshal(allProjects)
 				}
 			}
 
@@ -329,14 +346,15 @@ func main() {
 
 	}
 
-	/*for _, p := range Projects {
-		idmapping[application] = append(idmapping[application], p.ID)
-		namemapping[application] = append(namemapping[application], p.Name)
-	}*/
 	rawJson, _ := json.Marshal(idmapping)
 	os.WriteFile("project_id_mapping.json", rawJson, 0777)
 	rawJson, _ = json.Marshal(namemapping)
 	os.WriteFile("project_name_mapping.json", rawJson, 0777)
+
+	if prefix == "" && nameConflicts {
+		prefix = "unique-"
+		fmt.Println("There were duplicate project names in the input. A new zip file will be created named unique-", zipFile)
+	}
 
 	if prefix != "" {
 		err := CreateExportPackage(keyBytes, prefix, zipFile, fileList)

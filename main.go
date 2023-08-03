@@ -257,6 +257,10 @@ func main() {
 	zipFile := os.Args[1]
 	key := os.Args[2]
 
+	exportDir := filepath.Dir(zipFile)
+	filename := filepath.Base(zipFile)
+	fmt.Printf("file is at: %v, file is %v\n", exportDir, filename)
+
 	application := "MyApp"
 	if len(os.Args) >= 4 {
 		application = os.Args[3]
@@ -285,7 +289,7 @@ func main() {
 	}(zipReader)
 
 	for _, f := range zipReader.File {
-		path_pre := "out/" + zipFile + "/"
+		path_pre := "out/" + filename + "/"
 		path := filepath.Dir(path_pre + f.Name)
 		err := os.MkdirAll(path, 0777)
 		fileList = append(fileList, f.Name)
@@ -353,15 +357,15 @@ func main() {
 
 	if prefix == "" && nameConflicts {
 		prefix = "unique-"
-		fmt.Println("There were duplicate project names in the input. A new zip file will be created named unique-", zipFile)
+		fmt.Println("There were duplicate project names in the input. A new zip file will be created named unique-", filename)
 	}
 
 	if prefix != "" {
-		err := CreateExportPackage(keyBytes, prefix, zipFile, fileList)
+		err := CreateExportPackage(keyBytes, prefix, filename, fileList)
 		if err != nil {
 			fmt.Printf("Error while re-encrypting: %s\n", err)
 		} else {
-			fmt.Println("Re-encrypted using the same key into new file: ", prefix+zipFile)
+			fmt.Println("Re-encrypted using the same key into new file: ", prefix+filename)
 		}
 	}
 }

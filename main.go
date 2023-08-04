@@ -339,7 +339,7 @@ func main() {
 					namemapping[application] = append(namemapping[application], allProjects[id]["name"].(string))
 				}
 
-				if prefix != "" {
+				if prefix != "" || nameConflicts {
 					plaintext, _ = json.Marshal(allProjects)
 				}
 			}
@@ -350,15 +350,15 @@ func main() {
 
 	}
 
-	rawJson, _ := json.Marshal(idmapping)
-	os.WriteFile("project_id_mapping.json", rawJson, 0777)
-	rawJson, _ = json.Marshal(namemapping)
-	os.WriteFile("project_name_mapping.json", rawJson, 0777)
-
 	if prefix == "" && nameConflicts {
 		prefix = "unique-"
 		fmt.Println("There were duplicate project names in the input. A new zip file will be created named unique-", filename)
 	}
+
+	rawJson, _ := json.Marshal(idmapping)
+	os.WriteFile(prefix+"project_id_mapping.json", rawJson, 0777)
+	rawJson, _ = json.Marshal(namemapping)
+	os.WriteFile(prefix+"project_name_mapping.json", rawJson, 0777)
 
 	if prefix != "" {
 		err := CreateExportPackage(keyBytes, prefix, filename, fileList)

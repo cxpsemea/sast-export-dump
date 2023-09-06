@@ -283,7 +283,12 @@ func main() {
 
 	fmt.Println("Zip file contents will be extracted to 'out' folder.")
 
-	zipReader, _ := zip.OpenReader(zipFile)
+	zipReader, err := zip.OpenReader(zipFile)
+	if err != nil {
+		fmt.Printf("Failed to open zip file %v: %s\n", zipFile, err)
+		return
+	}
+
 	defer func(zipReader *zip.ReadCloser) {
 		_ = zipReader.Close()
 	}(zipReader)
@@ -294,19 +299,32 @@ func main() {
 		err := os.MkdirAll(path, 0777)
 		fileList = append(fileList, f.Name)
 		if err != nil {
-			fmt.Printf("Failed to create folder %v: %s", path, err)
+			fmt.Printf("Failed to create folder %v: %s\n", path, err)
 		} else {
-			zr, _ := zipReader.Open(f.Name)
-			bt, _ := io.ReadAll(zr)
+			fmt.Printf("Reading file: %v\n", f.Name)
+			zr, err := zipReader.Open(f.Name)
+			if err != nil {
+				fmt.Printf("Error while opening file: %s\n", err)
+			}
+			bt, err := io.ReadAll(zr)
+			if err != nil {
+				fmt.Printf("Error while reading file: %s\n", err)
+			}
 
 			// decrypt zipped content
 			encryptedFile := bytes.NewBuffer(bt)
 			compressedFile := bytes.NewBuffer([]byte{})
 
-			_ = Decrypt(encryptedFile, compressedFile, keyBytes, keyBytes)
+			err = Decrypt(encryptedFile, compressedFile, keyBytes, keyBytes)
+			if err != nil {
+				fmt.Printf("Error while decrypting: %s\n", err)
+			}
 			// decompress decrypted content
 			flateReader := flate.NewReader(compressedFile)
-			plaintext, _ := io.ReadAll(flateReader)
+			plaintext, err := io.ReadAll(flateReader)
+			if err != nil {
+				fmt.Printf("Error while reading file: %s\n", err)
+			}
 
 			if f.Name == "projects.json" {
 				var allProjects []map[string]interface{}
@@ -339,7 +357,7 @@ func main() {
 					namemapping[application] = append(namemapping[application], allProjects[id]["name"].(string))
 				}
 
-				if prefix != "" {
+				if prefix != "" || nameConflicts {
 					plaintext, _ = json.Marshal(allProjects)
 				}
 			}
@@ -350,15 +368,15 @@ func main() {
 
 	}
 
-	rawJson, _ := json.Marshal(idmapping)
-	os.WriteFile("project_id_mapping.json", rawJson, 0777)
-	rawJson, _ = json.Marshal(namemapping)
-	os.WriteFile("project_name_mapping.json", rawJson, 0777)
-
 	if prefix == "" && nameConflicts {
 		prefix = "unique-"
-		fmt.Println("There were duplicate project names in the input. A new zip file will be created named unique-", filename)
+		fmt.Printf("There were duplicate project names in the input. A new zip file will be created named unique-%v\n", filename)
 	}
+
+	rawJson, _ := json.Marshal(idmapping)
+	os.WriteFile(prefix+"project_id_mapping.json", rawJson, 0777)
+	rawJson, _ = json.Marshal(namemapping)
+	os.WriteFile(prefix+"project_name_mapping.json", rawJson, 0777)
 
 	if prefix != "" {
 		err := CreateExportPackage(keyBytes, prefix, filename, fileList)
